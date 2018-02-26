@@ -1,0 +1,789 @@
+---
+title: "Crypto Currency Analysis Report"
+author: "by Courtney Williams"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+Sys.setlocale("LC_ALL","English")
+library(flexdashboard)
+```
+
+
+
+About This Report
+=======================================================================
+
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+***
+
+**About This HTML File**
+
+This **R HTML Document** goes over the steps I've taken to analyze a particular security. This notebook will be updated periodically with new information and scripts and should be considered as a `work in progress`. 
+
+
+Column 
+-----------------------------------------------------------------------
+
+
+### R Packages  Used
+
+Load appropriate packages needed to pull and format the data:
+
+```{r}
+paste(
+"reshape2",
+"PerformanceAnalytics",
+"PortfolioAnalytics",
+"quantmod",
+"ggplot2",
+"ggthemes",
+"forecast",
+"tseries",
+"plotly",
+"astsa",
+"highcharter"
+)
+```
+
+
+**Note:**
+This HTML file is mainly to outline my skill with the R Statiscal Programming language and is prepared solely for informational purposes, and is not an offer to buy or sell or a solicitation of an offer to buy or sell any security, product, service or investment. The opinions expressed in this HTML file do not constitute investment advice and independent advice should be sought where appropriate.
+
+```{r}
+# Load appropriate packages needed to pull and format the data
+require(reshape2)
+library(PerformanceAnalytics)
+library(PortfolioAnalytics)
+library(quantmod)
+library(ggplot2)
+library(ggthemes)
+library(scales)
+library(forecast)
+library(tseries)
+library(plotly)
+library(astsa)
+library(highcharter)
+```
+
+
+
+
+Target Asset {data-navmenu="Analysis" data-icon="fa-line-chart"}
+=====================================================================
+
+Sidebar {.sidebar}
+-------------------------------------------------------
+
+***
+
+There are several components to note in the interactive chart below. 
+
+1. The first section shows the OHLC prices 
+2. The second section outlines trading activity as volume of shares for that day
+3. The third section is the Williams Percent Range, a momentum indicator that measures overbought and oversold levels - over the red line is overbought [time to sell] and below the blue is over sold [time to buy].
+4. This is just a range selctor toggle with the time period.
+
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Target Asset 
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE,fig.cap="Stock Price Trend of the Target Security"}
+# pull stock
+symbol = c("BTC-USD")
+target <- getSymbols(symbol, from = Sys.Date() - lubridate::years(4), auto.assign = FALSE)
+target <- adjustOHLC(target, adjust = c("split","dividend"), symbol.name = symbol)
+
+colnames(target) = c("Open","High","Low","Close","Volume","Adjusted")
+
+target.SMA.10 <- SMA(Cl(target), n = 5)
+target.SMA.200 <- SMA(Cl(target), n = 100)
+target.RSI.2 <- RSI(Cl(target), n = 2)
+target.RSI.SellLevel <- xts(rep(70, NROW(target)), index(target))
+target.RSI.BuyLevel <- xts(rep(30, NROW(target)), index(target))
+
+
+highchart(type = "stock") %>% 
+  # create axis :)
+  hc_yAxis_multiples(
+    create_yaxis(3, height = c(2, 1, 1), turnopposite = TRUE)
+  ) %>% 
+  # series :D
+  hc_add_series(target, yAxis = 0, name = paste(symbol)) %>% 
+  #hc_add_series(target.SMA.10, yAxis = 0, name = "Fast MA") %>% 
+  #hc_add_series(target.SMA.200, yAxis = 0, name = "Slow MA") %>% 
+  hc_add_series(target$Volume, color = "gray", yAxis = 1, name = "Volume", type = "column") %>% 
+  hc_add_series(target.RSI.2, yAxis = 2, name = "Osciallator", color = hex_to_rgba("green", 0.7)) %>%
+  hc_add_series(target.RSI.SellLevel, color = hex_to_rgba("red", 0.7),
+                yAxis = 2, name = "Sell level") %>% 
+  hc_add_series(target.RSI.BuyLevel, color = hex_to_rgba("blue", 0.7),
+                yAxis = 2, name = "Buy level")
+  # hc_add_theme(hc_theme_538()) %>%
+  # hc_title(text = paste(target, "Stock Price over time")) %>% hc_subtitle(text = "Graph plotted using the highcharter package")
+```
+
+
+Stationarity {data-navmenu="Analysis" data-icon="fa-dashboard"}
+=====================================================================
+
+
+Sidebar {.sidebar}
+-----------------------------------------------------------
+
+***
+
+The charts below shows the time series data of the adjusted price in the top most graph with the corresponding ACF and PACF plots below. An obvious upward trend would indicate a probable change in mean and variance over time. Any trend in the data will make it non-stationary. `Differencing` is a transformation method used to stabalize the variance of a time series. The ACF plot is also useful for identifying non-stationary time series. For a stationary time series, the ACF will drop to zero relatively quickly, while the ACF of non-stationary data decreases slowly.  
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Test for Stationarity on `r symbol` 
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+# pull adjusted price
+target_Adjusted = Ad(target)
+colnames(target_Adjusted) = "Adjusted"
+
+# make irregular time series data regular
+
+# create a date sequence
+date_seq = seq(from = start(target_Adjusted),
+                to = end(target_Adjusted),
+                by = "day")
+
+regular_xts = xts(, date_seq)
+
+# merge the two objects into one xts object and carry the last observation forward
+merge_xts = merge(target_Adjusted,regular_xts, fill = na.locf)
+
+
+# identify the process
+#x = acf2(merge_xts, max.lag = 60)
+
+ggtsdisplay(merge_xts, main = "Price trend with ACF/PACF Plots", smooth = TRUE, xlab = "Time")
+```
+
+
+
+
+
+
+
+First Order Diff {data-navmenu="Analysis"}
+=====================================================================
+
+
+Sidebar {.sidebar}
+--------------------------------------------------------------
+
+***
+
+The first order differenced time series should show a more stationary looking time series. Both the `ACF` and `PACF` plot should tail off to zero characteristics of non-stationarity.
+
+
+Row
+-----------------------------------------------------------------------
+
+
+
+### Differencing the Data
+
+
+
+```{r error=FALSE,message=FALSE,warning=FALSE}
+merge_xts_diff = diff(log(merge_xts))
+
+ggtsdisplay(merge_xts_diff, main = "First Order Difference to Detrend the Time Series", smooth = TRUE)
+```
+
+
+
+
+TS Components {data-navmenu="Analysis" data-icon="fa-list"}
+=====================================================================
+
+
+Sidebar {.sidebar}
+---------------------------------------------------
+
+***
+
+The key parts of the time series to investigate are it's `trend` and `seasonal` components.
+
+Daily vaules were converted into **monthly periodicity** to reduce variability and to better extract the time series components.
+
+
+***
+
+A summary of the values for each season.
+
+
+Column {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+### Time Series Components
+
+
+```{r error=FALSE,message=FALSE,warning=FALSE, fig.width=16, fig.height=10}
+# convet from daily to monthly periodocity
+monthlydata = to.period(merge_xts, period = "months", OHLC = FALSE)
+
+# convert ts object
+ts_object = ts(monthlydata, frequency = 12) 
+
+# plot components of time series
+trend = autoplot(decompose(ts_object))+
+  scale_y_continuous(labels = dollar) + 
+  ggtitle(paste("Decomposition of additive time series for ",symbol), subtitle = "Monthly Periodicity")+
+  xlab("Time in Years")
+
+trend
+
+```
+
+
+### Seasonal Values
+
+
+
+```{r error=FALSE,message=FALSE,warning=FALSE, fig.width=16, fig.height=10}
+#boxplot(ts_object ~ cycle(ts_object), xlab='Month')
+
+xts_df = data.frame(date=index(merge_xts), coredata(merge_xts))
+
+xts_df['date2'] = format(xts_df$date,'%B')
+xts_df$sort = as.POSIXlt(xts_df$date)$mon 
+xts_df$year = format(xts_df$date,'%Y')
+
+
+ggplot(xts_df, aes(x=reorder(date2,sort),y=Adjusted)) + 
+  geom_boxplot(outlier.color = 'light grey') + geom_jitter(aes(fill=year, color=year)) +
+  xlab("Month") + ylab("Prices") + scale_y_continuous(labels = dollar) +
+  geom_text(aes(label=ifelse(Adjusted==max(Adjusted),dollar(Adjusted),'')))+
+  ggtitle(paste("Seasonal Distribution of Prices for",symbol), subtitle = "Daily Prices color coded by year and grouped by month")
+
+  
+```
+
+
+
+### Ljung-Box Test
+
+The p-value of the `Ljung-Box` test below 0.05 suggest that the series is non-stationary.
+
+
+```{r error=FALSE,message=FALSE,warning=FALSE}
+# conveert xts to ts with frequency of 360 elements per cycle
+ts_daily = ts(merge_xts, frequency = 360)
+
+# perform Ljung-Box test time series
+Box.test(ts_daily, lag = 24, fitdf = 0, type = "Lj")
+```
+
+
+
+
+Forecasts {data-navmenu="Analysis" data-icon="fa-line-chart"}
+=====================================================================
+
+
+
+Sidebar {.sidebar}
+---------------------------------------------------
+
+***
+
+Short-term forecast of what to expect in future price trends for `r symbol`. The confidence levels are shown darker at 80% and lighter at 95%. The further out the forecast the less useful it becomes.
+
+***
+
+
+
+Column {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+
+
+### Forecast [FC]
+
+
+```{r fig.width=16, fig.height=10}
+
+fcast2 <- forecast(ts_daily)
+fc2 = autoplot(fcast2)+
+  scale_y_continuous(labels = dollar)+
+  ylab("Price")
+
+fc2
+```
+
+
+
+
+
+
+### Residuals of FC
+
+
+
+```{r}
+checkresiduals(fcast2, test = FALSE)
+```
+
+
+
+### Model Result 
+
+
+Model Statistics
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+
+fcast2$model
+```
+
+ARIMA {data-navmenu="Analysis" data-icon="fa-line-chart"}
+=====================================================================
+
+
+
+Row {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+
+
+### ARIMA Model on `r symbol` statistics
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+model = auto.arima(ts_daily)
+
+model
+```
+
+
+
+### ARIMA residuals
+
+
+```{r fig.width=16, fig.height=10}
+checkresiduals(model, test = FALSE)
+
+```
+
+
+
+
+### ARIMA PLot
+
+```{r fig.width=16, fig.height=10}
+autoplot(forecast(model, h=90, level = c(80, 95)))+
+  scale_y_continuous(labels = dollar)+
+  ylab("Price")+xlab('Time in years')
+
+```
+
+
+
+Assets {data-navmenu="Performance"}
+=====================================================================
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Asset Prices
+
+Pull Asset Data
+
+```{r error=FALSE,message=FALSE,warning=FALSE}
+StartDate = as.character(Sys.Date()-365*4)
+EndDate = as.character(Sys.Date())
+
+Symbols<- c("BTC-USD","LTC-USD","XRP-USD","ETH-USD","ARK-USD","BCH-USD")
+
+```
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+VIX<-as.xts(na.omit(getSymbols("^VIX",from=StartDate,auto.assign=FALSE)))
+SP500_Price<-as.xts(na.omit(getSymbols("^GSPC",from=StartDate,auto.assign=FALSE)))
+SP500<-as.xts(dailyReturn(na.omit(getSymbols("^GSPC",from=StartDate,auto.assign=FALSE))),type='log')
+S1<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[1],from=StartDate,auto.assign=FALSE))),type='log')
+S2<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[2],from=StartDate,auto.assign=FALSE))),type='log')
+S3<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[3],from=StartDate,auto.assign=FALSE))),type='log')
+S4<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[4],from=StartDate,auto.assign=FALSE))),type='log')
+S5<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[5],from=StartDate,auto.assign=FALSE))),type='log')
+S6<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[6],from=StartDate,auto.assign=FALSE))),type='log')
+#S7<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[7],from=StartDate,auto.assign=FALSE))),type='log')
+#S8<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[8],from=StartDate,auto.assign=FALSE))),type='log')
+#S9<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[9],from=StartDate,auto.assign=FALSE))),type='log')
+#S10<-as.xts(dailyReturn(na.omit(getSymbols(Symbols[10],from=StartDate,auto.assign=FALSE))),type='log')
+```
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+Stocks = lapply(Symbols, function(sym) {
+  dailyReturn(na.omit(getSymbols(sym, from=StartDate, auto.assign=FALSE)),type = 'log')
+})
+```
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+basket = do.call(merge, Stocks)
+
+colnames(SP500) = "SP500"
+colnames(basket) = Symbols
+
+basket_SP500 = cbind(basket,SP500)
+
+N = length(Symbols)
+
+weights = rep(1/N,N)
+```
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE,fig.width=16, fig.height=10}
+# create a list object that has all the adjusted prices
+prices_list = lapply(Symbols, function(pri) {
+  Ad(getSymbols(pri, from=StartDate, auto.assign=FALSE))
+})
+
+# convert the list object into a workable xts object with all the adjusted prices
+prices = do.call(merge, prices_list)
+
+# rename columns using the Symbol list
+colnames(prices) = Symbols
+
+# create a data frame
+prices_df = data.frame(date=index(prices),coredata(prices))
+
+# then convert dataframe into a molten data frame, which is easy to use with ggplot2
+prices_mdf = melt(prices_df, id.vars = 'date')
+
+# plot prices using ggplot
+plt =  ggplot(prices_mdf,aes(x=date,y=value))+geom_line(aes(group=variable,colour=variable))+
+  facet_wrap(~variable, scales = 'free_y')
+plt = plt + xlab("Time") + ylab("Prices") + ggtitle("Price Trend") + scale_y_continuous(labels = dollar)+
+  scale_color_discrete(name='Asset')
+
+# plot graph
+plt
+```
+
+
+
+
+Return {data-navmenu="Performance"}
+=====================================================================
+
+
+Sidebar {.sidebar}
+-----------------------------------------------------------
+
+***
+
+Graph showing the value of a $1 investment in each asset in the past as it appreciates over time.
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Return performance 
+
+
+
+```{r}
+# FV of $1 invested
+
+log_ret = diff(log(prices))
+gret <- 1+log_ret #calculating gross returns
+gret = gret[complete.cases(gret),] # removes all NA's which may reduce the time window
+n <- nrow(gret)
+fv_gret <- cumprod(gret)
+fv_gret_df = data.frame(date=index(fv_gret),coredata(fv_gret))
+fv_gret_mdf = melt(fv_gret_df,id.vars = 'date')
+hchart(fv_gret_mdf,"line",hcaes(x=date,y=round(value,2),group=variable))%>%
+  hc_yAxis(title = list(text = "USD"),
+           labels = list(format = "${value}"))%>%
+  #hc_tooltip(pointFormat = "${point.y}")%>%
+  hc_title(text = "FV of $1 invested", margin=20,align='left')  
+```
+
+
+
+
+Correlations {data-navmenu="Performance"}
+=====================================================================
+
+
+Sidebar {.sidebar}
+---------------------------------------------------
+
+***
+
+The shading is proportion to the securities correlation with one another: darker blue shades show strong positive correlation while the light blue ones show weak but positive correlations.
+
+
+Row
+--------------------------------------------------------------------
+
+
+### Return Correlation Part 1
+
+
+```{r error=FALSE,message=FALSE,warning=FALSE}
+chart.Correlation(basket[complete.cases(basket),])
+```
+
+
+### Return Correlation Part 2
+
+```{r}
+hchart(cor(basket[complete.cases(basket),]))
+```
+
+
+
+Dendrogram {data-navmenu="Performance"}
+====================================================
+
+
+Sidebar {.sidebar}
+--------------------------------------------------
+
+***
+
+The dendrogeram is form of hierachical clustering in the form of a tree. The leaves of the tree are the individual securities or records and the lenght of the branch in tree indicates the degree of dissimilarity between corresponding clusters. The diagram below is based solely on return behavior of the individual securites/assets and makes the clustering based on that factor. Certain stocks may fall into natural groups, like energy, crypto currencies or financial assets - since they likely exhibit similiar return behavior -  but you do have exceptions to the rule. The distance or height between two clusters is calculated as follows: $$D = 1 - C$$ where D = Distance and C = correlation between security clusters.
+
+
+Row
+-------------------------------------------------
+
+
+### Dendrogram
+
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+df = t(basket[,Symbols])
+d = dist(df)
+hcl = hclust(d)
+plot(hcl,main = "Asset Cluster Dendrogram based on Daily Log Returns",xlab="Securities/Assets", ylab="Height/Distance")
+
+
+```
+
+
+
+
+
+Performance {data-navmenu="Performance"}
+=====================================
+
+Column
+-----------------------------------------------------------------------
+
+
+### Annualized Perfomance
+
+```{r echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+library(knitr)
+library(kableExtra)
+Rf = 0.005
+kable(table.AnnualizedReturns(basket[complete.cases(basket),], scale = 252, Rf=Rf/252),format = "html", caption = "Annualized Return Table[note]") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
+  add_footnote(c("Table displays risk/reward statistics for each security"), notation = "symbol")
+```
+
+
+Risk {data-navmenu="Risk"}
+=============================================================
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+
+Risk-Return plots
+
+
+
+Column
+-----------------------------------------------------------------------
+
+### Risk versus Return
+```{r Risk_Return, echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+chart.RiskReturnScatter(basket[complete.cases(basket),],Rf=Rf/252)
+```
+
+
+
+Value at Riskk {data-navmenu="Risk"}
+=============================================================
+
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+
+```{r}
+conf_lvl = 0.99
+
+percent <- function(x, digits = 0, format = "f", ...) {
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+}
+
+basket_adj = basket[complete.cases(basket),]
+
+```
+
+
+
+**Value at Risk** (VaR) is a statistically-based measure of risk that estimates the amount of potential loss that may be incurred due to adverse market movements. One-day VaR plots given at the `r percent(conf_lvl)` confidence level are shown in the two tabs. VaR is calculated using a look back period of `r nrow(basket_adj)` days. Note, the VaR calculations has limitations since volatility and covariances may not be constant, in which case using historical proxies will lead to wrong conclusions.
+
+***
+
+Note:
+The area under the density plot curves are equal to `1`, however, given the a suffciently small base the average height may exceed 1 on the y-axis.
+
+***
+
+
+Column {.tabset .tabset-fade}
+-----------------------------------------------------------------------
+
+
+### VaR if invested since August
+
+```{r VaR, echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+
+
+VAR.Hist = VaR(basket_adj, p=conf_lvl, weights=NULL, portfolio_method = "single", method = "historical")
+VAR.Gaus = VaR(basket_adj, p=conf_lvl, weights=NULL, portfolio_method = "single", method = "gaussian")
+VAR.Mod = VaR(basket_adj, p=conf_lvl, weights=NULL, portfolio_method = "single", method = "modified")
+
+ALL.VAR = data.frame(rbind(VAR.Hist,VAR.Gaus,VAR.Mod))
+rownames(ALL.VAR) = c("Hist","Gaus","Mod")
+
+PortVAR.Hist = VaR(basket_adj, p=conf_lvl, weights=weights, portfolio_method = "component", method = "historical")
+PortVAR.Gaus = VaR(basket_adj, p=conf_lvl, weights=weights, portfolio_method = "component", method = "gaussian")$VaR[1,1]
+PortVAR.Mod = VaR(basket_adj, p=conf_lvl, weights=weights, portfolio_method = "component", method = "modified")$MVaR[1,1]
+
+ALL.VAR$Portfolio <- c(PortVAR.Hist,PortVAR.Gaus,PortVAR.Mod)
+ALL.VAR <- abs(ALL.VAR)
+ALL.VAR$Type <- c("Historical","Gaussian","Modified")
+
+plotVAR <- melt(ALL.VAR, variable.name = "Asset", value.name = "VaR")
+g = ggplot(plotVAR, aes(x=Type, y=VaR, fill=Asset)) + geom_bar(stat = "identity", position = "dodge")+scale_y_continuous(label=scales::percent)
+ggplotly(g)
+```
+
+
+
+### Density Plot of Returns
+
+```{r fig.width=16, fig.height=10}
+log_ret_df = data.frame(date=index(basket_adj),coredata(basket_adj))
+log_ret_long = melt(log_ret_df, id.vars='date')
+
+# prepare density plots
+dens = ggplot(log_ret_long,aes(x=value, color=variable)) +
+  geom_histogram(aes(y = ..density..)) +
+  geom_density(alpha=.2, fill="#FF6666") +
+  facet_wrap(~variable, scales = 'free_y') +
+  xlab("Profit & Loss Distribution") + ylab("Density/Probability") + ggtitle("Density Plots of Historical Returns",
+  subtitle = paste("One-day value at risk per asset given a ", percent(conf_lvl), "confidence level")) + scale_x_continuous(labels = percent)+ 
+  scale_color_discrete(name='Asset')
+
+# create group mean
+gd = log_ret_long %>%
+  group_by(variable) %>%
+  summarise(value=mean(value))
+
+
+# create VaR via the quantile method
+q = log_ret_long %>%
+  group_by(variable) %>%
+  summarise(value=quantile(value,1-conf_lvl))
+
+
+# plot graphs
+dens +
+  geom_vline(data=q, aes(xintercept=value),
+             linetype="dashed") +
+  geom_text(data=q,aes(x=value, y=4,label=paste("V@R ",percent(value))), colour="blue")
+
+
+```
+
+
+Optimal Portfolio {data-navmenu="Portfolio"}
+===============================================
+
+
+Sidebar {.sidebar}
+---------------------------------------------------
+
+***
+
+The efficient frontier is the set of optimal portfolios that offers the highest expected return for a defined level of risk or the lowest risk for a given level of expected return. Portfolios that lie below the efficient frontier are sub-optimal, because they do not provide enough return for the level of risk. Portfolios that cluster to the right of the efficient frontier are also sub-optimal, because they have a higher level of risk for the defined rate of return. In the graph below the `mean` column represent average returns and `StdDev` colummn stands for standard deviation of those returns which represents asset risk. The `BLUE` dot represents the Optimal protfolio while the `YELLOW` dot shows the Optimal portoflio with equal weights.
+
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Portfolio Specifications
+
+```{r Port_Specs, echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+library(PortfolioAnalytics)
+port_spec = portfolio.spec(colnames(basket_adj))
+port_spec = add.constraint(portfolio = port_spec,
+                           type = "full_investment")
+port_spec = add.constraint(portfolio = port_spec,
+                           type = "long_only")
+port_spec = add.objective(portfolio = port_spec,
+                          type = "return", name = "mean")
+port_spec = add.objective(portfolio = port_spec,
+                          type = "risk", name = "StdDev")
+print(port_spec)
+```
+
+
+Row 
+-----------------------------------------------------------------------
+
+
+### Effiient Frontier Plot
+
+
+```{r Efficient_Frontier, echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+opt = optimize.portfolio(basket_adj, portfolio = port_spec,
+                         optimize_method = "random", trace = TRUE)
+chart.RiskReward(opt, risk.col = "StdDev", return.col = "mean", chart.assets = TRUE)
+```
+
+
+
+### Optimal Portfolio Weights
+
+
+```{r Port_Weights, echo=FALSE,error=FALSE,message=FALSE,warning=FALSE}
+chart.Weights(opt)
+```
+
